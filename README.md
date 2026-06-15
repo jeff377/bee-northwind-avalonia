@@ -187,4 +187,4 @@ bee-northwind-avalonia/
 └── Bee.Northwind.Desktop/        desktop entry point
 ```
 
-This demo is developed in the [bee-library](https://github.com/jeff377/bee-library) repository (under `apps/Bee.Northwind/`, against the framework sources) and published here as a standalone copy that consumes the released `Bee.*` NuGet packages. The detailed plan and the running framework-feedback log live in [plan-bee-northwind-demo.md](https://github.com/jeff377/bee-library/blob/main/docs/plans/plan-bee-northwind-demo.md).
+This demo is developed in the [bee-library](https://github.com/jeff377/bee-library) repository (under `apps/Bee.Northwind/`, against the framework sources) and published here as a standalone copy that consumes the released `Bee.*` NuGet packages.

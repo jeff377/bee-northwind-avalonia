@@ -187,4 +187,4 @@ bee-northwind-avalonia/
 └── Bee.Northwind.Desktop/        桌面進入點
 ```
 
-本 demo 於 [bee-library](https://github.com/jeff377/bee-library) repository 內開發（位於 `apps/Bee.Northwind/`、對框架原始碼開發），並在此以獨立副本發佈、純引用已發行的 `Bee.*` NuGet 套件。詳細計畫與持續累積的框架回饋清單見 [plan-bee-northwind-demo.md](https://github.com/jeff377/bee-library/blob/main/docs/plans/plan-bee-northwind-demo.md)。
+本 demo 於 [bee-library](https://github.com/jeff377/bee-library) repository 內開發（位於 `apps/Bee.Northwind/`、對框架原始碼開發），並在此以獨立副本發佈、純引用已發行的 `Bee.*` NuGet 套件。
