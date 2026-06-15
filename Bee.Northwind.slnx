@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Server/">
+    <Project Path="Bee.Northwind.Server/Bee.Northwind.Server.csproj" />
+  </Folder>
+  <Folder Name="/UI/">
+    <Project Path="Bee.Northwind.UI/Bee.Northwind.UI.csproj" />
+    <Project Path="Bee.Northwind.Desktop/Bee.Northwind.Desktop.csproj" />
+  </Folder>
+</Solution>

@@ -427,3 +427,9 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Bee.Northwind — build output + runtime SQLite database
+bin/
+*.db
+*.db-shm
+*.db-wal
