@@ -7,7 +7,7 @@ namespace Bee.Northwind.UI.ViewModels;
 
 /// <summary>
 /// First step of the demo flow. Lets the user edit the JSON-RPC endpoint and runs a
-/// <c>system.ping</c> through <see cref="ClientInfo.Initialize(string)"/>; on success it
+/// <c>system.ping</c> through <see cref="ClientInfo.InitializeAsync(string)"/>; on success it
 /// invokes the <c>onConnected</c> callback supplied by the parent
 /// <see cref="MainWindowViewModel"/>.
 /// </summary>
@@ -59,7 +59,7 @@ public partial class ConnectionViewModel : ViewModelBase
 
     /// <summary>
     /// Bound to the Connect button. Pings <see cref="Endpoint"/> via
-    /// <see cref="ClientInfo.Initialize(string)"/> and advances on success.
+    /// <see cref="ClientInfo.InitializeAsync(string)"/> and advances on success.
     /// </summary>
     [RelayCommand]
     private async Task ConnectAsync()
@@ -78,10 +78,11 @@ public partial class ConnectionViewModel : ViewModelBase
 
         try
         {
-            // ClientInfo.Initialize runs ApiConnectValidator (HTTP reachability + ping)
-            // then stores the endpoint via EndpointStorage. Wrapped in Task.Run because the
-            // call eventually does sync HTTP I/O; we don't want to block the UI thread.
-            await Task.Run(() => ClientInfo.Initialize(endpoint)).ConfigureAwait(true);
+            // ClientInfo.InitializeAsync runs ApiConnectValidator (HTTP reachability + ping)
+            // then stores the endpoint via EndpointStorage — fully async, so it does not block
+            // the UI thread. The async path is required on browser WASM, whose single-threaded
+            // runtime throws "Cannot wait on monitors" if any await is bridged synchronously.
+            await ClientInfo.InitializeAsync(endpoint).ConfigureAwait(true);
             ApiClientInfo.ApiKey = AppDefaults.ApiKey;
 
             SetStatus(

@@ -16,9 +16,10 @@ namespace Bee.Northwind.UI.ViewModels;
 /// <remarks>
 /// The menu is built from <see cref="ProgramSettings"/> fetched from the server, so the
 /// navigation is pure definition — adding a form to the menu is a ProgramSettings.xml entry,
-/// not a code change. The fetch goes through the cached, deadlock-safe synchronous
-/// <see cref="ClientInfo.DefineAccess"/>; it runs once, right after login, when the session
-/// token is already set.
+/// not a code change. The fetch goes through <see cref="ClientInfo.DefineAccess"/>, the async
+/// typed definition cache; it is safe on the single browser-wasm thread (no sync-over-async
+/// bridge) and serves later reads from cache. It runs once, right after login, when the
+/// session token is already set.
 /// </remarks>
 public partial class FormsViewModel : ViewModelBase
 {
@@ -33,21 +34,37 @@ public partial class FormsViewModel : ViewModelBase
     private bool _isPaneOpen = true;
 
     /// <summary>
-    /// Initialises the shell and loads the navigation menu from <see cref="ProgramSettings"/>.
+    /// Initialises the shell and kicks off the asynchronous navigation-menu load.
     /// </summary>
     public FormsViewModel()
     {
-        LoadNavItems();
+        // Fire-and-forget: the menu populates the bound ObservableCollection when the fetch
+        // completes. ConfigureAwait(true) keeps the continuation on the UI thread.
+        _ = LoadNavItemsAsync();
     }
 
     /// <summary>
     /// Builds the menu from the server's <see cref="ProgramSettings"/>: each category becomes a
     /// header row, each program item a form link.
     /// </summary>
-    private void LoadNavItems()
+    private async Task LoadNavItemsAsync()
     {
-        var settings = ClientInfo.DefineAccess.GetProgramSettings();
-        if (settings.Categories is null) { return; }
+        ProgramSettings settings;
+        try
+        {
+            settings = await ClientInfo.DefineAccess
+                .GetProgramSettingsAsync()
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            // A failed menu load must not crash the shell as an unobserved task exception;
+            // surface it as a disabled header so the empty menu is not silent.
+            NavItems.Add(NavItem.Header($"(menu load failed: {ex.Message})"));
+            return;
+        }
+
+        if (settings?.Categories is null) { return; }
 
         foreach (var category in settings.Categories)
         {
