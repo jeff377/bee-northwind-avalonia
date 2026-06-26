@@ -6,6 +6,8 @@ using Avalonia.Layout;
 using Avalonia.Styling;
 using Bee.Northwind.UI.Controls;
 using Bee.Northwind.UI.Models;
+using Bee.Northwind.UI.ViewModels;
+using Bee.UI.Avalonia.Views;
 
 namespace Bee.Northwind.UI.Views;
 
@@ -57,6 +59,16 @@ public partial class FormsView : UserControl
         if (NavList.SelectedItem is NavItem { IsHeader: false, ProgId.Length: > 0 } item)
         {
             OpenForm(item);
+
+            // On a narrow (phone) layout the inline pane leaves the opened form almost no width,
+            // so collapse it after a selection; on a wide layout it stays open. Same width
+            // threshold as the responsive form layout, so menu and form switch together.
+            if (DataContext is FormsViewModel vm
+                && Bounds.Width > 0
+                && Bounds.Width < FormView.DefaultCompactWidthThreshold)
+            {
+                vm.IsPaneOpen = false;
+            }
         }
     }
 
@@ -124,6 +136,40 @@ public partial class FormsView : UserControl
         }
 
         SyncNavToActiveTab();
+    }
+
+    /// <summary>
+    /// Handles a platform back request (Android hardware / gesture back) for the shell, unwinding
+    /// one navigation level: a record returns to its list, otherwise the active document tab is
+    /// closed. Routed here from <see cref="MainView"/>'s <c>TopLevel.BackRequested</c> handler.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if a level was unwound and the request was consumed;
+    /// <see langword="false"/> when no tabs remain, letting the platform handle back (exit the app).
+    /// </returns>
+    public bool TryHandleBack()
+    {
+        if (Tabs.SelectedItem is not TabItem active)
+        {
+            // No open tab — let the platform exit.
+            return false;
+        }
+
+        // First unwind an open record back to its list, mirroring the on-screen Back button.
+        if (active.Content is FormWorkspace workspace && workspace.TryGoBack())
+        {
+            return true;
+        }
+
+        // The active tab is already on its list: close the tab. The last close empties the shell,
+        // so the next back request finds no tab and falls through to the platform (app exit).
+        if (active.Tag is string tag)
+        {
+            CloseTab(tag);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>Highlights the menu entry matching the currently active tab.</summary>
