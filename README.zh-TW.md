@@ -58,8 +58,7 @@ async 連線、overlay 對話框、publish 注意事項）見
 同一套 UI 也能以 Avalonia single-view head 在 iOS 與 Android 上執行，並連同上面執行中的 server。
 下方預設用 **Debug** 跑（免簽章、迭代快）。Release 的 trim/AOT 序列化相容性**已解並驗證** ——
 `Bee.Definition` 內隨套件附上 `ILLink.Descriptors.xml`，在 full trim 下保留定義型別圖，已在
-Android 模擬器（full trim）與 iOS 模擬器（強制 reflection-only path，等同 device AOT）驗證通過，
-見 [plan-mobile-release-trim-safe.md](https://github.com/jeff377/bee-library/blob/main/docs/plans/plan-mobile-release-trim-safe.md)；
+Android 模擬器（full trim）與 iOS 模擬器（強制 reflection-only path，等同 device AOT）驗證通過。
 iOS 上實機則另需 Apple Developer 簽章憑證。畫面會響應式重排 —— 窄螢幕下表單
 單欄、清單卡片化 —— 且 Android 硬體 / 手勢返回鍵會先退記錄 → 關分頁，才退出 app。
 
@@ -75,6 +74,23 @@ dotnet build Bee.Northwind.Android -t:Run -f net10.0-android -c Debug
 manifest 已開 dev 明文 HTTP。在 **iOS 模擬器**則用 `http://localhost:5100/api`（ATS 於 dev 允許任意連線）。
 
 > 首次執行 server 會在 server 專案旁建立 `northwind.db` 並灌入 Northwind 子集。刪除該檔即可重新建表灌種子。
+
+## 執行畫面
+
+四個 Avalonia head 渲染同一張訂單表單 —— 同一份定義、同一套控件，差別只在最外層的平台殼。
+
+**桌面與 Browser（WASM）：**
+
+| 桌面 | Browser |
+|---|---|
+| ![桌面 — 訂單單筆](https://raw.githubusercontent.com/jeff377/blog-images/main/avalonia-mobile-frontend-desktop-order-detail.png) | ![Browser — 訂單單筆](https://raw.githubusercontent.com/jeff377/blog-images/main/avalonia-mobile-frontend-browser-order-detail.png) |
+
+**iOS 與 Android：**
+
+| | iOS | Android |
+|---|---|---|
+| **訂單清單** | ![iOS — 訂單清單](https://raw.githubusercontent.com/jeff377/blog-images/main/avalonia-mobile-frontend-ios-order-list.png) | ![Android — 訂單清單](https://raw.githubusercontent.com/jeff377/blog-images/main/avalonia-mobile-frontend-android-order-list.png) |
+| **訂單單筆** | ![iOS — 訂單單筆](https://raw.githubusercontent.com/jeff377/blog-images/main/avalonia-mobile-frontend-ios-order-detail.png) | ![Android — 訂單單筆](https://raw.githubusercontent.com/jeff377/blog-images/main/avalonia-mobile-frontend-android-order-detail.png) |
 
 ## 表單清單
 
