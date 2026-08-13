@@ -1,8 +1,11 @@
 using System.Globalization;
 using System.Text.Json;
+using Bee.Base.Security;
 using Bee.Db;
 using Bee.Db.Manager;
+using Bee.Db.Providers;
 using Bee.Db.Schema;
+using Bee.Definition;
 using Bee.Definition.Storage;
 
 namespace Bee.Northwind.Server;
@@ -23,9 +26,10 @@ namespace Bee.Northwind.Server;
 /// </remarks>
 public static class NorthwindSchemaSeeder
 {
-    // Business data (ft_* + the app's org tables) lives in the company database; framework
-    // cross-company tables (st_cache_notify) live in common. Both ids resolve to the same
-    // SQLite file in this single-company demo (see DatabaseSettings.xml).
+    // Three categories, three database ids: framework cross-company tables in common, business
+    // data (ft_* + the app's org tables) in company, the audit trail in log. All three resolve to
+    // the same SQLite file in this single-company demo (see DatabaseSettings.xml) — the category
+    // is what the framework routes on, so splitting them later is a change to that file alone.
     private const string CommonDatabaseId = "common";
     private const string CompanyDatabaseId = "company";
 
@@ -35,10 +39,51 @@ public static class NorthwindSchemaSeeder
         Dictionary<string, string>? Forward = null,
         Dictionary<string, string>? Deferred = null);
 
-    // Framework tables not registered in DbCategorySettings; their TableSchema is materialized
-    // from Bee.Definition embedded defaults by NorthwindBackend.AddNorthwindBackend. Currently
-    // just st_cache_notify, polled by CacheNotifyPoller.
-    private static readonly string[] s_frameworkTables = { "st_cache_notify" };
+    /// <summary>
+    /// Resource-path prefixes of the framework-owned table definitions inside
+    /// <see cref="Defaults"/>. Shared with <see cref="NorthwindBackend"/>, which materialises the
+    /// same sets into the demo's <c>Define</c> directory.
+    /// </summary>
+    public static readonly string[] FrameworkTableSchemaPrefixes =
+    {
+        "TableSchema/common/",
+        "TableSchema/log/",
+    };
+
+    private const string CommonTableSchemaPrefix = "TableSchema/common/";
+
+    private const string TableSchemaSuffix = ".TableSchema.xml";
+
+    /// <summary>
+    /// Names every common-database table the framework ships a definition for, derived from
+    /// <see cref="Defaults.ListEmbedded"/> rather than a hand-written list.
+    /// </summary>
+    /// <remarks>
+    /// These tables <em>are</em> registered in <c>DbCategorySettings</c> under the <c>common</c>
+    /// category, so building them goes through the same category loop as every other table.
+    /// This list is no longer what creates them; it is what checks the registration is complete.
+    ///
+    /// IMPORTANT: the check exists because a hand-maintained list is exactly what broke sign-in
+    /// once already — two framework changes each added a common-table dependency to `Login`, the
+    /// list was not updated, and the failure surfaced only as a generic API error at sign-in time.
+    /// Moving the list into XML makes "add a table" pure configuration, but it does not make the
+    /// list self-maintaining, so <see cref="VerifyCommonRegistration"/> compares the registered
+    /// set against what the framework actually ships and fails startup on a gap.
+    ///
+    /// The trade-off is that tables this demo never uses — <c>st_company</c>,
+    /// <c>st_user_company</c>, <c>st_define</c>, <c>st_api_key</c> — are created empty, because it
+    /// substitutes its own <c>ICompanyInfoService</c> and does not store definitions in the
+    /// database. A few unused empty tables in the demo SQLite file are a cheaper price than
+    /// silently breaking every head the next time the framework reaches for a new table.
+    /// </remarks>
+    public static IReadOnlyList<string> GetFrameworkCommonTables()
+    {
+        return Defaults.ListEmbedded()
+            .Where(rel => rel.StartsWith(CommonTableSchemaPrefix, StringComparison.Ordinal)
+                && rel.EndsWith(TableSchemaSuffix, StringComparison.Ordinal))
+            .Select(rel => rel[CommonTableSchemaPrefix.Length..^TableSchemaSuffix.Length])
+            .ToArray();
+    }
 
     // Insert order: a forward-relation target must precede its dependents.
     private static readonly SeedTable[] s_seeds =
@@ -78,9 +123,11 @@ public static class NorthwindSchemaSeeder
         ArgumentNullException.ThrowIfNull(connectionManager);
         ArgumentNullException.ThrowIfNull(dbAccessFactory);
 
+        VerifyCommonRegistration(defineAccess);
         EnsureSchema(defineAccess, connectionManager);
+        SeedDemoUser(dbAccessFactory.Create(CommonDatabaseId));
 
-        // All seed data is business data, so it lands in the company database.
+        // The rest of the seed data is business data, so it lands in the company database.
         var dbAccess = dbAccessFactory.Create(CompanyDatabaseId);
         var seedDir = Path.Combine(AppContext.BaseDirectory, "SeedData");
 
@@ -89,6 +136,132 @@ public static class NorthwindSchemaSeeder
 
         foreach (var seed in s_seeds.Where(s => s.Deferred is not null))
             ApplyDeferredRelations(dbAccess, seed, seedDir);
+
+        VerifyTablesExist(defineAccess, connectionManager);
+    }
+
+    /// <summary>
+    /// Fails startup when the <c>common</c> category does not register every common table the
+    /// framework ships a definition for, naming the ones that are missing.
+    /// </summary>
+    /// <remarks>
+    /// Registering tables in <c>DbCategorySettings</c> is what makes "add a table" pure
+    /// configuration, but a hand-written list does not notice when the framework grows a new
+    /// dependency. This check is the part that does notice: it compares the registered set against
+    /// <see cref="GetFrameworkCommonTables"/>, which is derived from the embedded defaults rather
+    /// than typed out. The failure it prevents is specific and has happened — a framework change
+    /// added a common-table dependency to sign-in, nothing here was updated, and the only symptom
+    /// was a generic API error at login.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The common category is missing or incomplete.</exception>
+    private static void VerifyCommonRegistration(IDefineAccess defineAccess)
+    {
+        var settings = defineAccess.GetDbCategorySettings();
+        var registered = settings.Categories?
+            .Where(c => string.Equals(c.Id, CommonDatabaseId, StringComparison.Ordinal))
+            .SelectMany(c => c.Tables?.Select(t => t.TableName) ?? Enumerable.Empty<string>())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var missing = GetFrameworkCommonTables()
+            .Where(table => !registered.Contains(table))
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Northwind startup aborted: DbCategorySettings.xml does not register these framework " +
+                "common tables under the \"common\" category — " + string.Join(", ", missing) +
+                ". Add a TableItem for each; the framework reaches for them directly and the failure " +
+                "would otherwise surface only as a generic API error at sign-in.");
+        }
+    }
+
+    /// <summary>
+    /// Seeds the single demo account into <c>st_user</c> so sign-in runs the framework's own
+    /// <c>st_user</c> authentication rather than an application-supplied credential check.
+    /// </summary>
+    /// <remarks>
+    /// The hash is computed here rather than stored as a literal: a literal would silently stop
+    /// matching the first time the hashing parameters change, and the symptom would be a correct
+    /// password that no longer signs in.
+    /// <para>
+    /// The row also carries <c>time_zone</c> and <c>culture</c>, which is what makes the session
+    /// take its locale from the user rather than from the deployment defaults.
+    /// </para>
+    /// </remarks>
+    private static void SeedDemoUser(DbAccess dbAccess)
+    {
+        var countSpec = new DbCommandSpec(DbCommandKind.Scalar, "SELECT COUNT(*) FROM st_user");
+        if (Convert.ToInt32(dbAccess.Execute(countSpec).Scalar, CultureInfo.InvariantCulture) > 0) { return; }
+
+        const string sql =
+            "INSERT INTO st_user (sys_rowid, sys_id, sys_name, password, email, note, time_zone, culture, deployment_admin) " +
+            "VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8})";
+
+        dbAccess.Execute(new DbCommandSpec(DbCommandKind.NonQuery, sql,
+            Guid.NewGuid(),
+            NorthwindCredentials.UserId,
+            NorthwindCredentials.DisplayName,
+            PasswordHasher.HashPassword(NorthwindCredentials.Password),
+            string.Empty,
+            string.Empty,
+            NorthwindCredentials.TimeZone,
+            NorthwindCredentials.Culture,
+            false));
+    }
+
+    /// <summary>
+    /// Fails startup when any table this seeder was meant to create is absent, naming the ones
+    /// that are missing.
+    /// </summary>
+    /// <remarks>
+    /// The point is to convert a silent failure into a loud one. A table that is expected but
+    /// missing does not announce itself: nothing breaks until some request happens to touch it,
+    /// and by then the symptom is a generic API error a long way from the cause. Checking at
+    /// startup means the demo either comes up usable or refuses to come up at all.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">One or more expected tables are missing.</exception>
+    private static void VerifyTablesExist(IDefineAccess defineAccess, IDbConnectionManager connectionManager)
+    {
+        var expected = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+        var settings = defineAccess.GetDbCategorySettings();
+        if (settings.Categories != null)
+        {
+            foreach (var category in settings.Categories.Where(c => c.Tables != null))
+            {
+                if (!expected.TryGetValue(category.Id, out var names))
+                {
+                    names = new List<string>();
+                    expected[category.Id] = names;
+                }
+                names.AddRange(category.Tables!.Select(t => t.TableName));
+            }
+        }
+
+        var missing = new List<string>();
+        foreach (var (databaseId, tables) in expected)
+        {
+            var connectionInfo = connectionManager.GetConnectionInfo(databaseId);
+            var provider = DbDialectRegistry.Get(connectionInfo.DatabaseType)
+                .CreateTableSchemaProvider(databaseId, connectionManager);
+
+            // GetTableSchema returns null for a table that does not exist, so absence is an
+            // ordinary result here rather than a provider exception to catch.
+            missing.AddRange(tables
+                .Where(table => provider.GetTableSchema(table) == null)
+                .Select(table => $"{databaseId}.{table}"));
+        }
+
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Northwind startup aborted: the following tables were expected but do not exist — " +
+                string.Join(", ", missing) +
+                ". Delete northwind.db to rebuild the schema from scratch; if a table still fails " +
+                "to appear, its TableSchema definition is missing or failed to build.");
+        }
     }
 
     private static void EnsureSchema(IDefineAccess defineAccess, IDbConnectionManager connectionManager)
@@ -109,10 +282,6 @@ public static class NorthwindSchemaSeeder
             }
         }
 
-        // Framework tables live in the common database and the TableSchema/common/ folder.
-        var commonBuilder = new TableSchemaBuilder(CommonDatabaseId, defineAccess, connectionManager);
-        foreach (var table in s_frameworkTables)
-            commonBuilder.Execute(CommonDatabaseId, table);
     }
 
     private static void InsertRows(DbAccess dbAccess, SeedTable seed, string seedDir)

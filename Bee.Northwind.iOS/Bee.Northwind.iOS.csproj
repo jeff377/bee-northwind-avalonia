@@ -14,7 +14,7 @@
       TreatWarningsAsErrors: the iOS build runs trim analysis and Bee's reflection-heavy
       serialization (XmlSerializer for FormSchema, System.Text.Json, MessagePack) emits
       IL2026 / IL2104 trim warnings that are expected here. Release / trim-safe packaging
-      is a separate follow-up (see .claude/rules/maui.md Apple trim decision tree).
+      is a separate follow-up.
     -->
   </PropertyGroup>
 
@@ -25,5 +25,15 @@
   <ItemGroup>
     <ProjectReference Include="..\Bee.Northwind.UI\Bee.Northwind.UI.csproj" />
   </ItemGroup>
+
+  <!-- Time zone data must ship: the framework converts every instant between UTC and the user's
+       zone through TimeZoneInfo, so a build without tz data fails at the first conversion — and on
+       this head that is every screen showing a date. Invariant globalization would also strip it.
+       Both are the SDK defaults today; they are pinned because the failure is a runtime exception
+       on device, which no desktop build or test can catch. -->
+  <PropertyGroup>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <InvariantTimezone>false</InvariantTimezone>
+  </PropertyGroup>
 
 </Project>

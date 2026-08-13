@@ -58,7 +58,7 @@ async 連線、overlay 對話框、publish 注意事項）見
 同一套 UI 也能以 Avalonia single-view head 在 iOS 與 Android 上執行，並連同上面執行中的 server。
 下方預設用 **Debug** 跑（免簽章、迭代快）。Release 的 trim/AOT 序列化相容性**已解並驗證** ——
 `Bee.Definition` 內隨套件附上 `ILLink.Descriptors.xml`，在 full trim 下保留定義型別圖，已在
-Android 模擬器（full trim）與 iOS 模擬器（強制 reflection-only path，等同 device AOT）驗證通過。
+Android 模擬器（full trim）與 iOS 模擬器（強制 reflection-only path，等同 device AOT）驗證通過；
 iOS 上實機則另需 Apple Developer 簽章憑證。畫面會響應式重排 —— 窄螢幕下表單
 單欄、清單卡片化 —— 且 Android 硬體 / 手勢返回鍵會先退記錄 → 關分頁，才退出 app。
 
@@ -114,14 +114,29 @@ manifest 已開 dev 明文 HTTP。在 **iOS 模擬器**則用 `http://localhost:
 
 `Order → Employee` 是有趣的跨層連線：業務表（`ft_order`）指向框架系統表（`st_employee`）—— 訂單上的業務員就是框架的員工。
 
-### 落在哪個資料庫（`common` vs `company`）
+### 落在哪個資料庫（`common` / `company` / `log`）
 
-前綴表示誰**擁有**一張表；另一個獨立的維度表示它落在哪個**資料庫**。`FormSchema` 的 `CategoryId` 選擇資料庫 scope：
+前綴表示誰**擁有**一張表；另一個獨立的維度表示它落在哪個**資料庫**。`FormSchema` 的 `CategoryId` 選擇資料庫 scope，只有三個值：
 
-- **`company`** —— 各公司獨立的業務資料。**本 demo 的資料全是公司資料**：`ft_` 表，以及組織表 `st_department` / `st_employee`（一家應用的員工屬於該公司）。router 透過 session 的公司解析到公司資料庫。
-- **`common`** —— 跨公司共用的框架表（工作階段、cache-notify 訊號）。非應用資料。
+- **`company`** —— 各公司獨立的業務資料：`ft_` 表，以及組織表 `st_department` / `st_employee`（一家應用的員工屬於該公司）。router 透過 session 的公司解析到公司資料庫。
+- **`common`** —— 跨公司共用的框架表：使用者（`st_user`）、工作階段、cache-notify 訊號、定義儲存、公司與 API 金鑰。非應用資料。
+- **`log`** —— 稽核軌跡：登入、資料異動、檢視、API 與資料庫異常各一張表。它在正式部署通常獨立一個資料庫，因為成長曲線與業務資料不同、讀它的人也不同。
 
-本 demo 是單公司，所以登入時自動進入一個固定公司（`NorthwindCompanyInfoService` + 在 session 蓋上 `CompanyId` —— hardcoded 登入的公司情境對應版），並讓 `common` 與 `company` 兩個資料庫指向同一個 `northwind.db` 檔。真實的多公司部署會給每家公司各自的資料庫,並走完整的 `EnterCompany` 流程進入。
+**兩個維度是正交的**：`st_department` / `st_employee` 是框架擁有的表（`st_` 前綴），卻落在 **company** 資料庫，因為一家公司的員工就是那家公司的資料。把「誰擁有」和「放哪裡」綁成同一件事，在多公司部署上會撞牆。
+
+三個分類都登錄在 `Define/DbCategorySettings.xml`，seeder 照著它逐張建表 —— 加一張表因此是純 XML。
+
+本 demo 是單公司，所以三個資料庫都指向同一個 `northwind.db` 檔。**分類是框架路由的依據，所以日後要把稽核或某家公司拆到獨立資料庫，改的只有 `DatabaseSettings.xml` 一個檔，一份表單定義都不必動。**
+
+登入時自動進入一個固定公司（`NorthwindCompanyInfoService` + 在 session 蓋上 `CompanyId`）。真實的多公司部署會給每家公司各自的資料庫，並走完整的 `EnterCompany` 流程進入 —— 那條流程會驗 `st_company` 與 `st_user_company`，所以本 demo 那兩張表是建了不用的空表。
+
+### 登入與稽核，兩者都是零應用程式碼
+
+登入走**框架自己的 `st_user` 認證**：seeder 在首次啟動時把 `demo` 帳號寫進 `st_user`，密碼以 `PasswordHasher` 現算雜湊存入（不是寫死的雜湊值，否則換一次雜湊參數就對不上）。應用沒有任何一行認證程式 —— 比對帳號密碼在每個部署都一樣，所以那件事屬於框架。
+
+那一列同時帶著 `time_zone` 與 `culture`，於是 session 的時區取自**使用者**而不是伺服器或部署預設值。
+
+稽核在 `SystemSettings.xml` 開啟之後，**每一次登入成功、失敗與鎖定都會自動落進 `st_log_login`**，同樣零應用程式碼：框架的 `Login` 本身就在三個分支各寫一次。demo 把 `UseBackgroundWriter` 設為 `false`，記錄在登入回傳的當下就看得到；正式部署維持預設的批次寫入。
 
 ## Northwind → bee 模型對應
 
@@ -147,11 +162,14 @@ Northwind 是正規化的關聯式 schema；bee 是 `sys_rowid`（Guid）關連�
 | 新增／修改／刪除分派 | **框架** | `FormBusinessObject` + repository |
 | Lookup 對話框、外鍵寫回、JOIN 重載 | **定義 + 框架** | 關連欄位 + `RelationFieldMappings`；框架 `GetLookup` |
 | Master-detail 整筆一次儲存 | **框架** | repository，由多表 `FormSchema` 驅動 |
-| 導航選單（分組表單清單） | **定義** | `ProgramSettings.xml` |
+| progId 對業務物件與 Repository 的綁定 | **定義** | `ProgramSettings.xml`（型別註冊表） |
+| 導航選單（分組表單清單） | **定義** | `MenuSettings.xml` |
 | 登入／工作階段／加密 | **框架** | `SystemBusinessObject`、API 管線 |
 | **單據編號、狀態轉移、驗證、金額** | **應用程式碼** | `OrderBO`（全應用唯一的業務邏輯） |
 
 唯一的 C# 業務物件 [`OrderBO`](Bee.Northwind.Server/BusinessObjects/OrderBO.cs) 覆寫 `Save` / `GetNewData`，補上一般表單無法表達的規則。其純規則拆到 [`OrderRules`](Bee.Northwind.Server/BusinessObjects/OrderRules.cs) 與 [`OrderDataSet`](Bee.Northwind.Server/BusinessObjects/OrderDataSet.cs)，不依賴資料庫、與協調流程分離。
+
+它的兩個資料庫查詢放在 [`IOrderRepository`](Bee.Northwind.Server/Repositories/IOrderRepository.cs) / [`OrderRepository`](Bee.Northwind.Server/Repositories/OrderRepository.cs)，與業務物件綁在**同一筆**註冊表項目上 —— 一支程式、一個業務物件、一個 Repository。這是「表單需要產生式 CRUD 以外的資料存取」時的樣式範本：**擴充** `IDataFormRepository` 而非取代它、衍生自 `DataFormRepository`，BO 端以介面取得（`CreateFormRepository<IOrderRepository>()`）。把 SQL 移出業務物件，也正是這兩個查詢得以路由到訂單自己的公司資料庫、而非業務物件當初隨手指名那個資料庫的原因。
 
 ## 終章：三十分鐘加一張 Region 表單，零程式碼
 
@@ -212,17 +230,25 @@ Region 是業務資料,所以放在 **company** 分類(`TableSchema/company/`),�
 
 這讓 seeder 在下次啟動時建立此表（它會把此處註冊的每一張表，建到該分類對應的資料庫）。
 
-### 4. 放上選單 —— 加到 `Define/ProgramSettings.xml`
+### 4. 註冊程式 —— 加到 `Define/ProgramSettings.xml`
 
 ```xml
 <ProgramItem ProgId="Region" DisplayName="Regions" />
 ```
 
-`ProgramSettings.xml` **就是**應用的程式清單 —— 導航選單由它建立，新項目會出現在左側選單。（沒有 `BusinessObject` 屬性，代表使用框架預設 CRUD。）
+`ProgramSettings.xml` 是型別註冊表：把 progId 對應到綁定於它的型別 —— 一個商業物件與一個 Repository。（兩個屬性都沒有，代表使用框架預設 CRUD；本專案除 `Order` 外皆是如此。）
 
-### 5. 重啟
+### 5. 放上選單 —— 加到 `Define/MenuSettings.xml`
 
-重啟 server（它會建立 `ft_region`）與桌面前端。**Regions** 現在出現在左側選單的 Master Data 之下，具備可用的清單、新增、修改、刪除，以及來自 `uk_` 索引的唯一代碼檢查 —— 全部來自四處定義修改，不編譯你自己的任何程式碼。
+```xml
+<MenuEntry Id="region" Caption="Regions" Order="60" ProgId="Region" />
+```
+
+放進 `master-data` 資料夾內。`Id` 是節點的 key、需全樹唯一；它與 `ProgId` 分離，因此同一支程式可以出現在選單的多個位置。
+
+### 6. 重啟
+
+重啟 server（它會建立 `ft_region`）與桌面前端。**Regions** 現在出現在左側選單的 Master Data 之下，具備可用的清單、新增、修改、刪除，以及來自 `uk_` 索引的唯一代碼檢查 —— 全部來自五處定義修改，不編譯你自己的任何程式碼。
 
 ## 專案結構
 
@@ -230,10 +256,11 @@ Region 是業務資料,所以放在 **company** 分類(`TableSchema/company/`),�
 bee-northwind-avalonia/
 ├── Define/                       定義 —— 真實來源（非專案，由 server 讀取）
 │   ├── FormSchema/               每張表單一個檔
-│   ├── TableSchema/company/      業務表（company/ + common/ 放框架表）
-│   ├── DatabaseSettings.xml      common + company 兩個資料庫
+│   ├── TableSchema/{common,company,log}/  一個分類一個資料夾
+│   ├── DatabaseSettings.xml      common + company + log 三個資料庫
 │   ├── DbCategorySettings.xml    各分類有哪些表（驅動建表）
-│   └── ProgramSettings.xml       程式清單（驅動選單 + BO 綁定）
+│   ├── ProgramSettings.xml       型別註冊表（progId 對業務物件 + Repository）
+│   └── MenuSettings.xml          導航選單（資料夾、排序、標題）
 ├── Bee.Northwind.Server/         JSON-RPC 後端、OrderBO、JSON 種子資料
 ├── Bee.Northwind.UI/             Avalonia 共用 UI（views、view models、導航）
 ├── Bee.Northwind.Desktop/        桌面進入點（Avalonia.Desktop）

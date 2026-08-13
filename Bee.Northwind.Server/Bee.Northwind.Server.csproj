@@ -10,11 +10,30 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <!--
+    Wiring for the framework convention analyzers (BEE1xxx / BEE2xxx), which check this
+    application's real definition files at build time. Two parts, and each is silent when missing.
+
+    Bee.Definition is referenced directly even though the packages below already pull it in
+    transitively. The analyzer assembly does flow transitively, but the package's
+    build/Bee.Definition.targets does not: NuGet imports a package's build/ folder only for a
+    direct reference. Without that import the analyzer loads and finds no files to read, so every
+    definition rule is inert and nothing says so.
+
+    BeeDefinitionFilesGlob then says where the definitions actually are. The glob those targets
+    inject is rooted at the project directory, so that a multi-project solution does not rescan the
+    same tree once per project; this solution keeps its definitions at the root, one level up.
+  -->
+  <PropertyGroup>
+    <BeeDefinitionFilesGlob>..\Define\**\*.xml</BeeDefinitionFilesGlob>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="Bee.Api.AspNetCore" Version="4.12.1" />
-    <PackageReference Include="Bee.Business" Version="4.12.1" />
-    <PackageReference Include="Bee.Db" Version="4.12.1" />
-    <PackageReference Include="Bee.Hosting" Version="4.12.1" />
+    <PackageReference Include="Bee.Definition" Version="4.21.0" />
+    <PackageReference Include="Bee.Api.AspNetCore" Version="4.21.0" />
+    <PackageReference Include="Bee.Business" Version="4.21.0" />
+    <PackageReference Include="Bee.Db" Version="4.21.0" />
+    <PackageReference Include="Bee.Hosting" Version="4.21.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.4" />
     <!-- Force SQLitePCLRaw native bundle to 3.x (non-vulnerable SQLite engine); the 2.1.x
          line carries advisory GHSA-2m69-gcr7-jv3q with no 2.x patch. Microsoft.Data.Sqlite

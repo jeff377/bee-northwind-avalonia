@@ -18,7 +18,7 @@ namespace Bee.Northwind.Server;
 /// <summary>
 /// One-line bootstrap for the Bee.Northwind demo. Resolves the sibling <c>Define</c>
 /// directory, registers SQLite, loads SystemSettings, wires <c>AddBeeFramework</c>, then
-/// swaps in <see cref="NorthwindBusinessObjectFactory"/> so login authenticates against
+/// binds the reserved "System" progId in ProgramSettings.xml so login authenticates against
 /// <see cref="NorthwindCredentials"/> without seeding system tables.
 /// </summary>
 /// <remarks>
@@ -46,13 +46,17 @@ public static class NorthwindBackend
 
         var paths = new PathOptions { DefinePath = ResolveDefinePath() };
 
-        // AddBeeFramework registers the cache-notify poller, which reads st_cache_notify.
-        // Its TableSchema ships as an embedded framework default in Bee.Definition, so
-        // materialize it into the demo DefinePath (skip-if-exists) for IDefineAccess to
-        // resolve; NorthwindSchemaSeeder then creates the table.
+        // The framework owns two whole categories of table the demo does not define itself: the
+        // cross-company tables in common (st_user, st_session, st_cache_notify, ...) and the audit
+        // trail in log. Their TableSchema ships as embedded defaults in Bee.Definition, so
+        // materialize both folders into the demo DefinePath (skip-if-exists) for IDefineAccess to
+        // resolve. DbCategorySettings then registers them like any other table, and the ordinary
+        // category loop builds them. Taking the folders wholesale rather than naming files is
+        // deliberate: see GetFrameworkCommonTables for why, and for what the demo pays in return.
         Defaults.MaterializeTo(paths.DefinePath, new MaterializeOptions
         {
-            Filter = rel => rel == "TableSchema/common/st_cache_notify.TableSchema.xml"
+            Filter = rel => NorthwindSchemaSeeder.FrameworkTableSchemaPrefixes
+                .Any(prefix => rel.StartsWith(prefix, StringComparison.Ordinal))
         });
 
         // SQLite providers — keep dialect registration explicit so the framework does
@@ -71,10 +75,9 @@ public static class NorthwindBackend
             paths,
             autoCreateMasterKey: true);
 
-        // Replace the default factory so SystemBusinessObject calls (Login etc.) dispatch
-        // to NorthwindAuthenticatingSystemBusinessObject. The default IFormBoTypeResolver
-        // is left in place — Category CRUD continues to resolve via FormBusinessObject.
-        builder.Services.AddSingleton<IBusinessObjectFactory, NorthwindBusinessObjectFactory>();
+        // Nothing to register for the custom login: Define/ProgramSettings.xml binds the reserved
+        // progId "System" to NorthwindSystemBusinessObject, and the framework
+        // resolves it from there like any other progId.
 
         // Replace the default ICompanyInfoService (which reads st_company) with a hard-coded
         // demo company, so company-scoped forms route to the company database without seeding

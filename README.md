@@ -117,14 +117,29 @@ The table prefix records **who owns the table, not which database it lives in**:
 
 `Order → Employee` is the interesting cross-layer edge: a business table (`ft_order`) points at a framework system table (`st_employee`) — the salesperson on an order is a framework employee.
 
-### Which database (`common` vs `company`)
+### Which database (`common` / `company` / `log`)
 
-The prefix says who *owns* a table; a separate axis says which *database* it lives in. A `FormSchema`'s `CategoryId` selects the database scope:
+The prefix says who *owns* a table; a separate axis says which *database* it lives in. A `FormSchema`'s `CategoryId` selects the database scope, and it has exactly three values:
 
-- **`company`** — per-company business data. **All of this demo's data is company data**: the `ft_` tables *and* the org tables `st_department` / `st_employee` (an application's employees belong to that company). The router resolves company scope through the session's company to the company database.
-- **`common`** — cross-company shared framework tables (sessions, the cache-notify signal). Not application data.
+- **`company`** — per-company business data: the `ft_` tables *and* the org tables `st_department` / `st_employee` (an application's employees belong to that company). The router resolves company scope through the session's company to the company database.
+- **`common`** — cross-company shared framework tables: users (`st_user`), sessions, the cache-notify signal, definition storage, companies and API keys. Not application data.
+- **`log`** — the audit trail: one table each for logins, data changes, reads, and API / database anomalies. Production deployments usually give this its own database, because it grows on a different curve from business data and is read by different people.
 
-This demo is single-company, so it auto-enters one fixed company at login (`NorthwindCompanyInfoService` + a `CompanyId` stamped on the session — the company-context analogue of the hard-coded login) and points both the `common` and `company` databases at the same `northwind.db` file. A real multi-company deployment would give each company its own database and enter it through the full `EnterCompany` flow.
+**The two axes are orthogonal**: `st_department` / `st_employee` are framework-owned tables (`st_` prefix) that live in the **company** database, because a company's employees are that company's data. Tying "who owns it" to "where it lives" is what breaks on a multi-company deployment.
+
+All three categories are registered in `Define/DbCategorySettings.xml`, and the seeder builds every table listed there — which is what makes adding a table pure XML.
+
+This demo is single-company, so all three databases point at the same `northwind.db` file. **The category is what the framework routes on, so moving the audit trail (or one company) to its own database later is a change to `DatabaseSettings.xml` alone — not one form definition has to move.**
+
+It auto-enters one fixed company at login (`NorthwindCompanyInfoService` + a `CompanyId` stamped on the session). A real multi-company deployment would give each company its own database and enter it through the full `EnterCompany` flow — which validates `st_company` and `st_user_company`, so those two tables are created but unused here.
+
+### Sign-in and the audit trail, both with zero application code
+
+Sign-in uses the **framework's own `st_user` authentication**: the seeder writes a `demo` account into `st_user` on first start, with the password hashed through `PasswordHasher` at seed time (not a literal hash, which would silently stop matching the first time the hashing parameters change). The application contains no authentication code at all — comparing an account and a password is the same operation in every deployment, so it belongs to the framework.
+
+That row also carries `time_zone` and `culture`, so the session takes its zone from the **user** rather than from the server or a deployment default.
+
+With auditing enabled in `SystemSettings.xml`, **every successful, failed and locked-out sign-in lands in `st_log_login` automatically**, again with no application code: the framework's own `Login` writes one record on each of those three paths. The demo sets `UseBackgroundWriter` to `false` so a record is visible the moment sign-in returns; a production host keeps the default batch writer.
 
 ## Northwind → bee model mapping
 
@@ -150,11 +165,14 @@ This is the whole argument in one table.
 | Insert / update / delete dispatch | **framework** | `FormBusinessObject` + repository |
 | Lookup dialog, foreign key write-back, JOIN reload | **definition + framework** | relation field + `RelationFieldMappings`; framework `GetLookup` |
 | Master-detail save as one unit | **framework** | repository, driven by the multi-table `FormSchema` |
-| Navigation menu (grouped form list) | **definition** | `ProgramSettings.xml` |
+| progId to business-object and repository binding | **definition** | `ProgramSettings.xml` (the type registry) |
+| Navigation menu (grouped form list) | **definition** | `MenuSettings.xml` |
 | Login / session / encryption | **framework** | `SystemBusinessObject`, API pipeline |
 | **Order number, status transitions, validation, amounts** | **application code** | `OrderBO` (the only business logic in the app) |
 
 The single C# business object, [`OrderBO`](Bee.Northwind.Server/BusinessObjects/OrderBO.cs), overrides `Save` / `GetNewData` to add what a generic form cannot express. Its pure rules are factored into [`OrderRules`](Bee.Northwind.Server/BusinessObjects/OrderRules.cs) and [`OrderDataSet`](Bee.Northwind.Server/BusinessObjects/OrderDataSet.cs), kept free of database dependencies and separate from the orchestration.
+
+Its two database queries live in [`IOrderRepository`](Bee.Northwind.Server/Repositories/IOrderRepository.cs) / [`OrderRepository`](Bee.Northwind.Server/Repositories/OrderRepository.cs), bound to the *same* registry entry as the business object — one progId, one business object, one repository. That is the style template for a form that needs data access beyond the generated CRUD: extend `IDataFormRepository` rather than replace it, derive from `DataFormRepository`, and let the business object ask for it by interface (`CreateFormRepository<IOrderRepository>()`). Keeping the SQL out of the business object is also what let these two queries route to the order's own company database instead of the one the business object happened to name.
 
 ## Closing chapter: add a Region form in 30 minutes, with zero code
 
@@ -215,17 +233,25 @@ There is no `FormLayout` file to write — the framework generates the layout fr
 
 This is what makes the seeder build the table on the next start (it builds every table registered here, into the database the category maps to).
 
-### 4. Put it on the menu — add to `Define/ProgramSettings.xml`
+### 4. Register the program — add to `Define/ProgramSettings.xml`
 
 ```xml
 <ProgramItem ProgId="Region" DisplayName="Regions" />
 ```
 
-`ProgramSettings.xml` *is* the app's program list — the navigation menu is built from it, so a new entry appears in the left menu. (No `BusinessObject` attribute means it uses the framework's default CRUD.)
+`ProgramSettings.xml` is the type registry: it maps a progId to the types bound to it — a business object and a repository. (Neither attribute present means the framework's default CRUD, which is the case for every program here except `Order`.)
 
-### 5. Restart
+### 5. Put it on the menu — add to `Define/MenuSettings.xml`
 
-Restart the server (it creates `ft_region`) and the desktop client. **Regions** is now in the left menu under Master Data, with working list, new, edit, delete, and a unique-code check from the `uk_` index — all from four definition edits, no compilation of your own code.
+```xml
+<MenuEntry Id="region" Caption="Regions" Order="60" ProgId="Region" />
+```
+
+Add it inside the `master-data` folder. `Id` is the node key and must be unique across the whole menu tree; it is separate from `ProgId` so the same program can appear in more than one place.
+
+### 6. Restart
+
+Restart the server (it creates `ft_region`) and the desktop client. **Regions** is now in the left menu under Master Data, with working list, new, edit, delete, and a unique-code check from the `uk_` index — all from five definition edits, no compilation of your own code.
 
 ## Project layout
 
@@ -233,10 +259,11 @@ Restart the server (it creates `ft_region`) and the desktop client. **Regions** 
 bee-northwind-avalonia/
 ├── Define/                       definitions — the source of truth (no project, read by the server)
 │   ├── FormSchema/               one form per file
-│   ├── TableSchema/company/      business tables (company/ + common/ for framework)
-│   ├── DatabaseSettings.xml      the common + company databases
+│   ├── TableSchema/{common,company,log}/  one folder per category
+│   ├── DatabaseSettings.xml      the common + company + log databases
 │   ├── DbCategorySettings.xml    which tables exist, per category (drives schema build)
-│   └── ProgramSettings.xml       the program list (drives the menu + BO binding)
+│   ├── ProgramSettings.xml       the type registry (progId to business object + repository)
+│   └── MenuSettings.xml          the navigation menu (folders, order, captions)
 ├── Bee.Northwind.Server/         JSON-RPC backend, OrderBO, JSON seed data
 ├── Bee.Northwind.UI/             Avalonia shared UI (views, view models, navigation)
 ├── Bee.Northwind.Desktop/        desktop entry point (Avalonia.Desktop)
