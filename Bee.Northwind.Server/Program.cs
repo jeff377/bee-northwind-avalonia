@@ -5,8 +5,8 @@ const string DevWasmCorsPolicy = "BeeDevWasm";
 var builder = WebApplication.CreateBuilder(args);
 
 // Bee backend (in-process JSON-RPC dispatch). AddNorthwindBackend handles PathOptions,
-// SQLite registration, AddBeeFramework, and swaps in the demo authenticating factory so
-// demo/demo login works without seeding st_user.
+// SQLite registration and AddBeeFramework, and registers nothing beyond it. demo/demo signs in
+// through the framework's own st_user check, then enters the seeded company through EnterCompany.
 builder.AddNorthwindBackend();
 
 builder.Services.AddControllers();
