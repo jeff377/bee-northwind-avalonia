@@ -1,0 +1,190 @@
+name: Build CI
+
+# Proves the demo still compiles and runs against the released Bee.* NuGet packages it pins.
+# This repository consumes the framework purely as packages, so nothing here builds bee-library
+# sources — a red run means either the demo drifted or a framework release broke it.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # Everything except the iOS head. Debug is deliberate: the heads document Release / trim-safe
+  # packaging as a separate follow-up, and Debug is what the README tells a reader to run.
+  build:
+    name: Build (Server / UI / Desktop / Browser / Android)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # v5.2.0
+      with:
+        dotnet-version: 10.0.x
+
+    # The Android workload resolves the JDK through JAVA_HOME. The runner image sets one, but not
+    # necessarily to a version the Android SDK tooling accepts, so it is pinned rather than assumed.
+    - name: Setup Java
+      uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
+      with:
+        distribution: temurin
+        java-version: 17
+
+    - name: Install workloads
+      run: dotnet workload install wasm-tools android
+
+    - name: Restore
+      run: dotnet restore
+
+    # Built one at a time rather than through the solution so a failure names the head that broke.
+    # Server / UI / Desktop / Browser set TreatWarningsAsErrors, so any warning fails the run.
+    - name: Build Server
+      run: dotnet build Bee.Northwind.Server/Bee.Northwind.Server.csproj -c Debug --no-restore
+
+    - name: Build UI
+      run: dotnet build Bee.Northwind.UI/Bee.Northwind.UI.csproj -c Debug --no-restore
+
+    - name: Build Desktop
+      run: dotnet build Bee.Northwind.Desktop/Bee.Northwind.Desktop.csproj -c Debug --no-restore
+
+    - name: Build Browser (WASM)
+      run: dotnet build Bee.Northwind.Browser/Bee.Northwind.Browser.csproj -c Debug --no-restore
+
+    # No TreatWarningsAsErrors here: trim analysis emits IL2026 / IL2057 / IL2104 for the
+    # framework's reflection-based serialization, which the csproj documents as expected.
+    - name: Build Android
+      run: dotnet build Bee.Northwind.Android/Bee.Northwind.Android.csproj -c Debug --no-restore
+
+    # A build-only gate cannot see seeding defects. The seeder inserts each table under one
+    # transaction because its idempotence gate skips any table that already holds a row: a partial
+    # insert is therefore permanent, and nothing reports it — the next startup just sees a
+    # non-empty table. That shipped once, leaving ft_order_detail with 11 of its 12 rows. These
+    # assertions are what catches it.
+    - name: Smoke — start server and verify seeded data
+      working-directory: Bee.Northwind.Server
+      run: |
+        set -euo pipefail
+
+        rm -f northwind.db northwind.db-shm northwind.db-wal
+        dotnet run -c Debug --no-build > server.log 2>&1 &
+        server_pid=$!
+
+        # The first startup creates every table and seeds it, so this waits on real work rather
+        # than on process launch.
+        for _ in $(seq 1 60); do
+          if grep -q "Now listening on" server.log 2>/dev/null; then break; fi
+          if ! kill -0 "$server_pid" 2>/dev/null; then
+            echo "::error::Server exited before it finished starting."
+            cat server.log
+            exit 1
+          fi
+          sleep 1
+        done
+
+        if ! grep -q "Now listening on" server.log; then
+          echo "::error::Server did not start within 60 seconds."
+          cat server.log
+          kill "$server_pid" 2>/dev/null || true
+          exit 1
+        fi
+
+        kill "$server_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
+
+        fail=0
+        assert() {
+          local label="$1" expected="$2" actual="$3"
+          if [ "$actual" = "$expected" ]; then
+            echo "ok   $label = $actual"
+          else
+            echo "::error::$label expected $expected but found $actual"
+            fail=1
+          fi
+        }
+
+        assert "ft_order rows"        5  "$(sqlite3 northwind.db 'SELECT COUNT(*) FROM ft_order;')"
+        assert "ft_order_detail rows" 12 "$(sqlite3 northwind.db 'SELECT COUNT(*) FROM ft_order_detail;')"
+        assert "ft_product rows"      15 "$(sqlite3 northwind.db 'SELECT COUNT(*) FROM ft_product;')"
+        assert "ft_customer rows"     10 "$(sqlite3 northwind.db 'SELECT COUNT(*) FROM ft_customer;')"
+        assert "st_employee rows"     5  "$(sqlite3 northwind.db 'SELECT COUNT(*) FROM st_employee;')"
+
+        # Order 10252 is the one the partial-insert defect truncated. Summing the detail lines
+        # rather than reading a stored total means a missing line shows up as a wrong number.
+        assert "order 10252 total" 2235.0 "$(sqlite3 northwind.db \
+          "SELECT ROUND(SUM(d.unit_price * d.quantity * (1 - d.discount)), 2) \
+           FROM ft_order o JOIN ft_order_detail d ON d.sys_master_rowid = o.sys_rowid \
+           WHERE o.sys_id = '10252';")"
+
+        # Every order must carry its detail lines; a table-wide count alone would miss lines
+        # attached to the wrong master.
+        assert "orders missing details" 0 "$(sqlite3 northwind.db \
+          "SELECT COUNT(*) FROM ft_order o \
+           WHERE NOT EXISTS (SELECT 1 FROM ft_order_detail d WHERE d.sys_master_rowid = o.sys_rowid);")"
+
+        if [ "$fail" -ne 0 ]; then
+          echo "--- server log ---"
+          cat server.log
+          exit 1
+        fi
+
+  # Separate job because the iOS head needs a macOS runner and an exact Xcode.
+  build-ios:
+    name: Build (iOS)
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # v5.2.0
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Install iOS workload
+      run: dotnet workload install ios
+
+    - name: Restore
+      run: dotnet restore Bee.Northwind.iOS/Bee.Northwind.iOS.csproj
+
+    # .NET for iOS requires one exact Xcode major.minor and fails the build outright against any
+    # other. That version is not written down here: the SDK declares it as _RecommendedXcodeVersion,
+    # so it is read back from whichever SDK the workload install resolved. Hard-coding it would
+    # mean a second copy that drifts silently every time the workload moves.
+    #
+    # DEVELOPER_DIR selects the Xcode for this job only. `xcode-select` would work on a throwaway
+    # runner but is machine-wide, which is the wrong habit to copy onto a developer's Mac.
+    - name: Select the Xcode the iOS SDK requires
+      run: |
+        set -euo pipefail
+
+        required=$(dotnet msbuild Bee.Northwind.iOS/Bee.Northwind.iOS.csproj \
+          -getProperty:_RecommendedXcodeVersion -p:ValidateXcodeVersion=false | tr -d '[:space:]')
+
+        if [ -z "$required" ]; then
+          echo "::error::Could not read _RecommendedXcodeVersion from the iOS SDK."
+          exit 1
+        fi
+        echo "iOS SDK requires Xcode $required"
+
+        for candidate in "/Applications/Xcode_$required.app" /Applications/Xcode_"$required".*.app; do
+          if [ -d "$candidate" ]; then
+            echo "DEVELOPER_DIR=$candidate/Contents/Developer" >> "$GITHUB_ENV"
+            echo "Selected $candidate"
+            exit 0
+          fi
+        done
+
+        echo "::error::No Xcode $required on this runner. Installed: $(ls -d /Applications/Xcode*.app | tr '\n' ' ')"
+        echo "::error::Either the runner image moved on, or the iOS workload did. Pin whichever is wrong."
+        exit 1
+
+    - name: Build iOS
+      run: dotnet build Bee.Northwind.iOS/Bee.Northwind.iOS.csproj -c Debug --no-restore
