@@ -40,27 +40,28 @@ jobs:
     - name: Install workloads
       run: dotnet workload install wasm-tools android
 
-    - name: Restore
-      run: dotnet restore
-
+    # Each project restores itself as part of its own build step. A solution-wide restore is not
+    # an option here: the solution includes the iOS head, whose workload packs cannot exist on
+    # Linux, and restore fails on it (NETSDK1178) before any buildable project is reached.
+    #
     # Built one at a time rather than through the solution so a failure names the head that broke.
     # Server / UI / Desktop / Browser set TreatWarningsAsErrors, so any warning fails the run.
     - name: Build Server
-      run: dotnet build Bee.Northwind.Server/Bee.Northwind.Server.csproj -c Debug --no-restore
+      run: dotnet build Bee.Northwind.Server/Bee.Northwind.Server.csproj -c Debug
 
     - name: Build UI
-      run: dotnet build Bee.Northwind.UI/Bee.Northwind.UI.csproj -c Debug --no-restore
+      run: dotnet build Bee.Northwind.UI/Bee.Northwind.UI.csproj -c Debug
 
     - name: Build Desktop
-      run: dotnet build Bee.Northwind.Desktop/Bee.Northwind.Desktop.csproj -c Debug --no-restore
+      run: dotnet build Bee.Northwind.Desktop/Bee.Northwind.Desktop.csproj -c Debug
 
     - name: Build Browser (WASM)
-      run: dotnet build Bee.Northwind.Browser/Bee.Northwind.Browser.csproj -c Debug --no-restore
+      run: dotnet build Bee.Northwind.Browser/Bee.Northwind.Browser.csproj -c Debug
 
     # No TreatWarningsAsErrors here: trim analysis emits IL2026 / IL2057 / IL2104 for the
     # framework's reflection-based serialization, which the csproj documents as expected.
     - name: Build Android
-      run: dotnet build Bee.Northwind.Android/Bee.Northwind.Android.csproj -c Debug --no-restore
+      run: dotnet build Bee.Northwind.Android/Bee.Northwind.Android.csproj -c Debug
 
     # A build-only gate cannot see seeding defects. The seeder inserts each table under one
     # transaction because its idempotence gate skips any table that already holds a row: a partial
