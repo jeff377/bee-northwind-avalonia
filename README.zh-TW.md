@@ -2,6 +2,8 @@
 
 [English](README.md)
 
+[![Build CI](https://github.com/jeff377/bee-northwind-avalonia/actions/workflows/build-ci.yml/badge.svg)](https://github.com/jeff377/bee-northwind-avalonia/actions/workflows/build-ci.yml)
+
 一個示範範例 —— 經典的 **Northwind** 進銷存業務案例 —— 建構於 [Bee.NET](https://github.com/jeff377/bee-library) 框架之上（純以 NuGet 套件引用），展示如何以定義組裝出一套應用。它存在的目的，是把一個論點變得具體：
 
 > **一張具備完整新增／查詢／修改／刪除、清單瀏覽、跨表 lookup 的畫面，就是幾個 XML 定義檔 —— 不是 UI 程式、不是 CRUD 程式、不是 SQL。**

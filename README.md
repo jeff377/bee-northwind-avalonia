@@ -2,6 +2,8 @@
 
 [繁體中文](README.zh-TW.md)
 
+[![Build CI](https://github.com/jeff377/bee-northwind-avalonia/actions/workflows/build-ci.yml/badge.svg)](https://github.com/jeff377/bee-northwind-avalonia/actions/workflows/build-ci.yml)
+
 A demonstration — the classic **Northwind** inventory business case — built on the [Bee.NET](https://github.com/jeff377/bee-library) framework (consumed purely as NuGet packages) to show how an application is assembled from definitions. It exists to make one argument concrete:
 
 > **A new screen with full create / read / update / delete, list browsing, and cross-table lookups is a few XML definition files — not UI code, not CRUD code, not SQL.**
