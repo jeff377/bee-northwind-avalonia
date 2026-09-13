@@ -440,6 +440,3 @@ bin/
 # the seeder reads the file system rather than the index.
 !Define/TableSchema/log/
 !Define/TableSchema/log/**
-
-# Materialized at startup by NorthwindBackend from the Bee.Definition embedded defaults.
-Define/TableSchema/common/st_cache_notify.TableSchema.xml
