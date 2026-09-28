@@ -2,6 +2,15 @@
 
 [English](README.md)
 
+> [!IMPORTANT]
+> **This repository is no longer maintained.** It continues as
+> [polhem-northwind](https://github.com/polhem-dev/polhem-northwind), built on `Polhem.*` 1.0.0 —
+> the renamed Bee.NET framework. For package and name changes, see
+> [Migrating from Bee.NET](https://github.com/polhem-dev/polhem#migrating-from-beenet).
+>
+> **本 repo 已停止維護。** 由 [polhem-northwind](https://github.com/polhem-dev/polhem-northwind) 接續，
+> 改用 `Polhem.*` 1.0.0（Bee.NET 改名後的新框架）。套件與名稱的變更見[從 Bee.NET 遷移](https://github.com/polhem-dev/polhem/blob/main/README.zh-TW.md#從-beenet-遷移)。
+
 [![Build CI](https://github.com/jeff377/bee-northwind-avalonia/actions/workflows/build-ci.yml/badge.svg)](https://github.com/jeff377/bee-northwind-avalonia/actions/workflows/build-ci.yml)
 
 一個示範範例 —— 經典的 **Northwind** 進銷存業務案例 —— 建構於 [Bee.NET](https://github.com/jeff377/bee-library) 框架之上（純以 NuGet 套件引用），展示如何以定義組裝出一套應用。它存在的目的，是把一個論點變得具體：
